@@ -9,5 +9,10 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+  window._env_ = window._env_ || {};
+  // You can hardcode defaults here if needed
+  window._env_.API_URL = window._env_.API_URL || 'http://localhost:5000/api';
+</script>
   </body>
 </html>

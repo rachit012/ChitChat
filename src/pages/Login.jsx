@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import axios from "axios";
+import api from "../utils/api";
 import { FiEye, FiEyeOff, FiMail, FiLock } from "react-icons/fi";
+import { connectSocket } from "../utils/socket"; // Import the specific function
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -9,150 +10,137 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-
   const navigate = useNavigate();
 
-  // ✅ Redirect if already logged in (run only once on mount)
-  // useEffect(() => {
-  //   const token = localStorage.getItem("authToken");
-  //   if (token) {
-  //     navigate("/chat", { replace: true });
-  //   }
-  // }, [navigate]); // Runs only on first render
-
   useEffect(() => {
-  const verifyToken = async () => {
-    const token = localStorage.getItem("accessToken");
-    if (!token) return;
+    const verifyToken = async () => {
+      const token = localStorage.getItem("accessToken");
+      if (!token) return;
 
-    try {
-      const res = await axios.get("http://localhost:5000/api/auth/verify", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (res.data?.valid) {
-        navigate("/chat", { replace: true });
+      try {
+        const res = await api.get("/auth/verify");
+        if (res.data?.valid) {
+          connectSocket(token); // Use the imported connectSocket function
+          navigate("/", { replace: true });
+        }
+      } catch (err) {
+        localStorage.removeItem("accessToken");
+        localStorage.removeItem("user");
       }
-    } catch (err) {
-      // Token is invalid or expired
-      console.warn("Token verification failed", err);
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("user");
-    }
-  };
+    };
 
-  verifyToken();
-}, [navigate]);
-
-  
+    verifyToken();
+  }, [navigate]);
 
   const handleLogin = async (e) => {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-
-    if (!email || !password) {
-      setError("Please enter both email and password");
-      setLoading(false);
-      return;
-    }
-
+  e.preventDefault();
+  setLoading(true);
+  setError(null);
+  
+  try {
+    const { data } = await api.post("/auth/login", { email, password });
+    
+    localStorage.setItem("accessToken", data.token);
+    localStorage.setItem("user", JSON.stringify(data.user));
+    
+    // Connect socket after successful login
     try {
-      const response = await axios.post("http://localhost:5000/api/auth/login", {
-        email,
-        password,
-      });
-
-      const { token, user } = response.data;
-
-      if (token && user) {
-        localStorage.setItem("accessToken", token);
-        localStorage.setItem("user", JSON.stringify(user));
-
-        navigate("/chat", { replace: true }); // ✅ safe to navigate now
-      } else {
-        setError("Invalid login response from server");
-      }
-    } catch (err) {
-      console.log("Login error:", err);
-      setError(err.response?.data?.message || "Login failed");
-    } finally {
-      setLoading(false);
+      await connectSocket(data.token);
+      navigate("/");
+    } catch (socketErr) {
+      console.error("Socket connection failed:", socketErr);
+      // Still proceed since the app can work without socket
+      navigate("/");
     }
-  };
+  } catch (err) {
+    setError(err.response?.data?.message || "Login failed. Please try again.");
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
-    <div className="flex h-screen items-center justify-center bg-gray-100">
-      <div className="bg-white p-8 shadow-xl rounded-lg w-96">
-        <h2 className="text-3xl font-bold text-center text-blue-600">Login</h2>
-        <p className="text-center text-gray-500 mb-4">Welcome back! 👋</p>
+    <div className="flex h-screen items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50">
+      <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-800">Welcome Back</h1>
+          <p className="text-gray-500 mt-2">Sign in to continue to your account</p>
+        </div>
 
-        {error && <p className="text-red-500 text-center mb-4">{error}</p>}
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
 
-        <form onSubmit={handleLogin}>
-          <div className="mb-4 relative">
-            <label className="block text-gray-600">Email</label>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <div className="relative">
-              <span className="absolute left-3 top-2.5 text-gray-400">
-                <FiMail />
-              </span>
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <FiMail className="text-gray-400" />
+              </div>
               <input
                 type="email"
-                placeholder="Enter your email"
-                className="w-full pl-10 p-2 border rounded mt-1 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                placeholder="your@email.com"
+                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setError(null);
-                }}
+                onChange={(e) => setEmail(e.target.value)}
                 required
-                autoComplete="email"
               />
             </div>
           </div>
 
-          <div className="mb-4 relative">
-            <label className="block text-gray-600">Password</label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
             <div className="relative">
-              <span className="absolute left-3 top-2.5 text-gray-400">
-                <FiLock />
-              </span>
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <FiLock className="text-gray-400" />
+              </div>
               <input
                 type={showPassword ? "text" : "password"}
-                placeholder="Enter your password"
-                className="w-full pl-10 pr-10 p-2 border rounded mt-1 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                placeholder="••••••••"
+                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setError(null);
-                }}
+                onChange={(e) => setPassword(e.target.value)}
                 required
-                autoComplete="current-password"
               />
-              <span
-                className="absolute right-3 top-2.5 text-gray-400 cursor-pointer"
+              <button
+                type="button"
+                className="absolute inset-y-0 right-0 pr-3 flex items-center"
                 onClick={() => setShowPassword(!showPassword)}
               >
-                {showPassword ? <FiEyeOff /> : <FiEye />}
-              </span>
+                {showPassword ? (
+                  <FiEyeOff className="text-gray-400 hover:text-gray-500" />
+                ) : (
+                  <FiEye className="text-gray-400 hover:text-gray-500" />
+                )}
+              </button>
             </div>
           </div>
 
-          <button
-            className="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600 transition-colors duration-200"
-            type="submit"
-            disabled={loading}
-          >
-            {loading ? "Logging in..." : "Login"}
-          </button>
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className={`w-full py-2 px-4 rounded-lg font-medium ${loading
+                ? "bg-blue-400 cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-700"} text-white transition-colors`}
+            >
+              {loading ? "Signing in..." : "Sign in"}
+            </button>
+          </div>
         </form>
 
-        <p className="mt-4 text-center text-gray-600">
+        <div className="mt-6 text-center text-sm text-gray-500">
           Don't have an account?{" "}
-          <Link to="/register" className="text-blue-500 hover:underline">
+          <Link
+            to="/register"
+            className="text-blue-600 hover:text-blue-800 font-medium"
+          >
             Sign up
           </Link>
-        </p>
+        </div>
       </div>
     </div>
   );
