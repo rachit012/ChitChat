@@ -83,6 +83,8 @@ socket.on('sendMessage', async ({ receiver, text, clientMsgId }) => {
       { path: 'sender', select: 'username avatar' },
       { path: 'receiver', select: 'username avatar' }
     ]);
+
+    // NEW FEATURE
     
     // Emit to both parties with the same message object
     const messageToEmit = {
