@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import api from "../../utils/api";
 import { getSocket } from "../../utils/socket";
@@ -9,133 +9,211 @@ const RoomChat = ({ currentUser }) => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [socketError, setSocketError] = useState(null);
   const messagesEndRef = useRef(null);
 
-  useEffect(() => {
-  let socket;
-  let isMounted = true;
-
-  const setupSocket = async () => {
-    try {
-      socket = await getSocket();
-      if (!socket || !isMounted) return;
-
-      socket.emit("joinRoom", roomId);
-      
-      const messageHandler = (message) => {
-        if (message.roomId === roomId && isMounted) {
-          setMessages(prev => [...prev, message]);
-        }
-      };
-
-      const joinHandler = ({ userId, username, roomId: joinedRoomId }) => {
-        if (joinedRoomId === roomId && isMounted) {
-          setRoom(prev => ({
-            ...prev,
-            members: [...prev.members, { _id: userId, username }]
-          }));
-        }
-      };
-
-      const leaveHandler = ({ userId, roomId: leftRoomId }) => {
-        if (leftRoomId === roomId && isMounted) {
-          setRoom(prev => ({
-            ...prev,
-            members: prev.members.filter(member => member._id !== userId)
-          }));
-        }
-      };
-
-      socket.on("newRoomMessage", messageHandler);
-      socket.on("userJoinedRoom", joinHandler);
-      socket.on("userLeftRoom", leaveHandler);
-
-      return () => {
-        socket.off("newRoomMessage", messageHandler);
-        socket.off("userJoinedRoom", joinHandler);
-        socket.off("userLeftRoom", leaveHandler);
-      };
-    } catch (err) {
-      console.error("Socket setup error:", err);
-    }
-  };
-
-  const fetchRoom = async () => {
-    try {
-      const { data } = await api.get(`/rooms/${roomId}`);
-      if (isMounted) setRoom(data);
-    } catch (err) {
-      console.error("Failed to fetch room:", err);
-    } finally {
-      if (isMounted) setLoading(false);
-    }
-  };
-
-  setupSocket();
-  fetchRoom();
-
-  return () => {
-    isMounted = false;
-    if (socket) {
-      socket.emit("leaveRoom", roomId);
-    }
-  };
-}, [roomId]);
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
 
   useEffect(() => {
-  const socket = getSocket();
-  if (!socket) {
-    console.warn("Socket not available - realtime updates disabled");
-    return;
-  }
+    let isMounted = true;
+    let socket;
+    const cleanupFunctions = [];
 
-  const handleError = (err) => {
-    console.error("Socket error:", err);
-  };
+    const fetchRoom = async () => {
+      try {
+        const { data } = await api.get(`/rooms/${roomId}`);
+        if (isMounted) {
+          setRoom(data);
+          setSocketError(null);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setSocketError("Failed to load room data");
+          console.error("Failed to fetch room:", err);
+        }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
 
-  socket.on("connect_error", handleError);
-  
-  return () => {
-    socket.off("connect_error", handleError);
-  };
-}, [roomId]);
+    const setupSocket = async () => {
+      try {
+        socket = await getSocket();
+        if (!socket || !isMounted) return;
+
+        socket.emit("joinRoom", roomId);
+        
+        const messageHandler = (message) => {
+          if (isMounted && message.roomId === roomId) {
+            setMessages(prev => [...prev, message]);
+          }
+        };
+
+        const messageDeletedHandler = (message) => {
+          if (isMounted && message.roomId === roomId) {
+            setMessages(prev => prev.map(msg => 
+              msg._id === message._id ? message : msg
+            ));
+          }
+        };
+
+        const joinHandler = ({ userId, username, roomId: joinedRoomId }) => {
+          if (isMounted && joinedRoomId === roomId && room) {
+            setRoom(prev => ({
+              ...prev,
+              members: [...(prev.members || []), { _id: userId, username }]
+            }));
+          }
+        };
+
+        const leaveHandler = ({ userId, roomId: leftRoomId }) => {
+          if (isMounted && leftRoomId === roomId && room) {
+            setRoom(prev => ({
+              ...prev,
+              members: (prev.members || []).filter(member => member._id !== userId)
+            }));
+          }
+        };
+
+        const errorHandler = (err) => {
+          if (isMounted) {
+            setSocketError("Realtime connection issue - messages may be delayed");
+            console.error("Socket error:", err);
+          }
+        };
+
+        socket.on("newRoomMessage", messageHandler);
+        socket.on("roomMessageDeleted", messageDeletedHandler);
+        socket.on("userJoinedRoom", joinHandler);
+        socket.on("userLeftRoom", leaveHandler);
+        socket.on("connect_error", errorHandler);
+
+        cleanupFunctions.push(() => {
+          socket.off("newRoomMessage", messageHandler);
+          socket.off("roomMessageDeleted", messageDeletedHandler);
+          socket.off("userJoinedRoom", joinHandler);
+          socket.off("userLeftRoom", leaveHandler);
+          socket.off("connect_error", errorHandler);
+        });
+
+      } catch (err) {
+        if (isMounted) {
+          setSocketError("Failed to connect to realtime service");
+          console.error("Socket setup error:", err);
+        }
+      }
+    };
+
+    fetchRoom();
+    setupSocket();
+
+    return () => {
+      isMounted = false;
+      cleanupFunctions.forEach(fn => fn());
+      if (socket) {
+        socket.emit("leaveRoom", roomId);
+      }
+    };
+  }, [roomId]);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, scrollToBottom]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !room) return;
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim()) return;
+    try {
+      const socket = await getSocket();
+      if (!socket) {
+        throw new Error("Socket not available");
+      }
 
-    const socket = getSocket();
-    socket.emit("sendRoomMessage", {
-      roomId,
-      text: newMessage
-    });
-
-    setMessages(prev => [
-      ...prev,
-      {
+      // Generate unique ID for optimistic update
+      const tempId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const tempMessage = {
+        _id: tempId,
         sender: currentUser._id,
         senderName: currentUser.username,
         roomId,
         text: newMessage,
         timestamp: new Date(),
         isTemp: true
-      }
-    ]);
+      };
 
-    setNewMessage("");
+      // Optimistic update
+      setMessages(prev => [...prev, tempMessage]);
+      setNewMessage("");
+
+      // Send message via socket
+      socket.emit("sendRoomMessage", {
+        roomId,
+        text: newMessage,
+        tempId
+      });
+
+      // Set timeout to remove optimistic update if not confirmed
+      const timeout = setTimeout(() => {
+        setMessages(prev => prev.filter(msg => msg._id !== tempId));
+        setSocketError("Message sending timed out - please try again");
+      }, 10000);
+
+      // Cleanup when we receive the actual message from server
+      const confirmHandler = (message) => {
+        if (message.roomId === roomId && message.tempId === tempId) {
+          clearTimeout(timeout);
+          socket.off("newRoomMessage", confirmHandler);
+          setMessages(prev => prev.map(msg => 
+            msg._id === tempId ? message : msg
+          ));
+        }
+      };
+
+      socket.on("newRoomMessage", confirmHandler);
+
+    } catch (err) {
+      console.error("Failed to send message:", err);
+      setSocketError("Failed to send message - please try again");
+    }
   };
 
-  if (loading || !room) {
+  const handleDeleteMessage = async (messageId) => {
+    try {
+      const socket = await getSocket();
+      if (!socket) {
+        throw new Error("Socket not available");
+      }
+
+      // Optimistic update
+      setMessages(prev => prev.map(msg => 
+        msg._id === messageId 
+          ? { ...msg, text: '[Message deleted]', isDeleted: true } 
+          : msg
+      ));
+
+      // Send delete request via socket
+      socket.emit("deleteMessage", { messageId });
+
+    } catch (err) {
+      console.error("Failed to delete message:", err);
+      setSocketError("Failed to delete message - please try again");
+    }
+  };
+
+  if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <p>Loading room...</p>
+      </div>
+    );
+  }
+
+  if (!room) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-red-500">
+        Failed to load room data
       </div>
     );
   }
@@ -145,9 +223,14 @@ const RoomChat = ({ currentUser }) => {
       <div className="p-4 border-b border-gray-200">
         <h2 className="text-xl font-semibold">{room.name}</h2>
         <p className="text-sm text-gray-500">{room.description}</p>
+        {socketError && (
+          <div className="bg-yellow-100 text-yellow-800 p-2 text-sm mt-2">
+            {socketError}
+          </div>
+        )}
         <div className="flex items-center mt-2">
           <div className="flex -space-x-2">
-            {room.members.slice(0, 5).map((member, index) => (
+            {(room.members || []).slice(0, 5).map((member, index) => (
               <div
                 key={member._id}
                 className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-medium"
@@ -157,9 +240,9 @@ const RoomChat = ({ currentUser }) => {
               </div>
             ))}
           </div>
-          {room.members.length > 5 && (
+          {(room.members || []).length > 5 && (
             <span className="ml-2 text-sm text-gray-500">
-              +{room.members.length - 5} more
+              +{(room.members || []).length - 5} more
             </span>
           )}
         </div>
@@ -169,35 +252,53 @@ const RoomChat = ({ currentUser }) => {
         {messages.map((message, index) => {
           const isSender = message.sender === currentUser._id;
           const showHeader = index === 0 || 
-            messages[index - 1].sender !== message.sender ||
-            new Date(message.timestamp) - new Date(messages[index - 1].timestamp) > 60000;
-
+            messages[index - 1]?.sender !== message.sender ||
+            new Date(message.timestamp) - new Date(messages[index - 1]?.timestamp || 0) > 60000;
+          
           return (
-            <div key={index} className="space-y-1">
+            <div key={message._id} className="space-y-1">
               {showHeader && !isSender && (
                 <div className="text-xs font-medium text-gray-500">
                   {message.senderName}
                 </div>
               )}
               <div className={`flex ${isSender ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-xs lg:max-w-md px-4 py-2 rounded-2xl ${
-                    isSender
-                      ? "bg-blue-600 text-white rounded-br-none"
-                      : "bg-gray-200 text-gray-800 rounded-bl-none"
-                  }`}
-                >
-                  <div className="text-sm break-words">{message.text}</div>
+                <div className="relative group">
                   <div
-                    className={`text-xs mt-1 ${
-                      isSender ? "text-blue-200" : "text-gray-500"
+                    className={`max-w-xs lg:max-w-md px-4 py-2 rounded-2xl ${
+                      isSender
+                        ? "bg-blue-600 text-white rounded-br-none"
+                        : "bg-gray-200 text-gray-800 rounded-bl-none"
+                    } ${message.isTemp ? "opacity-80" : ""} ${
+                      message.isDeleted ? "italic text-gray-500" : ""
                     }`}
                   >
-                    {new Date(message.timestamp).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit"
-                    })}
+                    <div className="text-sm break-words">
+                      {message.isDeleted ? '[Message deleted]' : message.text}
+                    </div>
+                    <div
+                      className={`text-xs mt-1 ${
+                        isSender ? "text-blue-200" : "text-gray-500"
+                      }`}
+                    >
+                      {new Date(message.timestamp).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      })}
+                      {message.isTemp && " (Sending...)"}
+                    </div>
                   </div>
+                  {isSender && !message.isDeleted && !message.isTemp && (
+                    <button
+                      onClick={() => handleDeleteMessage(message._id)}
+                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Delete message"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

@@ -8,7 +8,8 @@ const UserSchema = new mongoose.Schema({
   bio: { type: String, default: "" },
   interests: { type: [String], default: [] },
   online: { type: Boolean, default: false },
-  lastSeen: { type: Date, default: Date.now }
+  lastSeen: { type: Date, default: Date.now },
+  lastActive: { type: Date, default: Date.now }
 }, { timestamps: true });
 
 module.exports = mongoose.model("User", UserSchema);

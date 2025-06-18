@@ -4,6 +4,8 @@ import api from "../utils/api";
 import Sidebar from "../components/Chat/Sidebar";
 import PrivateChat from "../components/Chat/PrivateChat";
 import RoomChat from "../components/Chat/RoomChat";
+import CreateRoom from "../components/CreateRoom";
+
 
 const Chat = () => {
   const [currentUser, setCurrentUser] = useState(null);
@@ -12,31 +14,41 @@ const Chat = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  useEffect(() => {
-  const fetchCurrentUser = async () => {
+  const handleLogout = async () => {
     try {
-      const { data } = await api.get("/auth/me");
-      setCurrentUser(data);
-      
-      if (location.pathname.includes("/room/")) {
-        setActiveTab("rooms");
-      } else if (location.pathname.includes("/chat/")) {
-        setActiveTab("users");
-      }
+      await api.post('/auth/logout');
+      localStorage.removeItem('accessToken');
+      navigate('/login');
     } catch (err) {
-      if (err.response?.status === 401) {
-        // The api.js interceptor should handle redirecting to login
-        console.error("Authentication failed:", err);
-      } else {
-        console.error("Failed to fetch user:", err);
-      }
-    } finally {
-      setLoading(false);
+      console.error('Logout failed:', err);
     }
   };
 
-  fetchCurrentUser();
-}, [navigate, location.pathname]);
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
+      try {
+        const { data } = await api.get("/auth/me");
+        setCurrentUser(data);
+        
+        if (location.pathname.includes("/room/")) {
+          setActiveTab("rooms");
+        } else if (location.pathname.includes("/chat/")) {
+          setActiveTab("users");
+        }
+      } catch (err) {
+        if (err.response?.status === 401) {
+          localStorage.removeItem('accessToken');
+          navigate('/login');
+        } else {
+          console.error("Failed to fetch user:", err);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCurrentUser();
+  }, [navigate, location.pathname]);
 
   if (loading) {
     return (
@@ -51,16 +63,18 @@ const Chat = () => {
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
-        currentUser={currentUser} 
+        currentUser={currentUser}
+        onLogout={handleLogout}
       />
       
       <Routes>
         <Route path="/chat/:userId" element={<PrivateChat currentUser={currentUser} />} />
         <Route path="/room/:roomId" element={<RoomChat currentUser={currentUser} />} />
+        <Route path="/create-room" element={<CreateRoom currentUser={currentUser} />} /> 
         <Route path="*" element={
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center p-8 max-w-md">
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">Welcome to WireChat</h2>
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">Welcome to ChitChat</h2>
               <p className="text-gray-600 mb-6">
                 {activeTab === "users" 
                   ? "Select a user to start a private conversation" 

@@ -100,24 +100,37 @@ ErrorBanner.propTypes = {
   message: PropTypes.string.isRequired
 };
 
-const UserProfile = ({ currentUser }) => (
+const UserProfile = ({ currentUser, onLogout }) => (
   <div className="p-4 border-b border-gray-200">
-    <div className="flex items-center space-x-3 mb-4">
-      <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold">
-        {currentUser?.username?.charAt(0).toUpperCase()}
+    <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center space-x-3">
+        <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold">
+          {currentUser?.username?.charAt(0).toUpperCase()}
+        </div>
+        <div>
+          <p className="font-medium">{currentUser?.username}</p>
+          <p className="text-xs text-gray-500">
+            {currentUser?.online ? "Online" : "Offline"}
+          </p>
+        </div>
       </div>
-      <div>
-        <p className="font-medium">{currentUser?.username}</p>
-        <p className="text-xs text-gray-500">Online</p>
-      </div>
+      <button
+        onClick={onLogout}
+        className="w-17 bg-red-600 hover:bg-red-700 text-white py-1 rounded-lg font-medium"
+        aria-label="Logout"
+      >
+        Logout
+      </button>
     </div>
   </div>
 );
 
 UserProfile.propTypes = {
   currentUser: PropTypes.shape({
-    username: PropTypes.string
-  })
+    username: PropTypes.string,
+    online: PropTypes.bool
+  }),
+  onLogout: PropTypes.func
 };
 
 const SearchBar = ({ searchQuery, setSearchQuery }) => (
@@ -190,16 +203,16 @@ const Sidebar = ({ activeTab, setActiveTab, currentUser, onLogout }) => {
   const navigate = useNavigate();
 
   const filteredUsers = useMemo(() => (
-  users.filter(user =>
-    user.username.toLowerCase().includes(searchQuery.toLowerCase())
-  )
-), [users, searchQuery]);  // Added missing parenthesis here
+    users.filter(user =>
+      user.username.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  ), [users, searchQuery]);
 
-const filteredRooms = useMemo(() => (
-  rooms.filter(room =>
-    room.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
-), [rooms, searchQuery]);
+  const filteredRooms = useMemo(() => (
+    rooms.filter(room =>
+      room.name.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  ), [rooms, searchQuery]);
 
   const handleUserStatusChange = useCallback((userId, online) => {
     setUsers(prev => prev.map(user => 
@@ -308,7 +321,7 @@ const filteredRooms = useMemo(() => (
     <div className="w-80 bg-white border-r border-gray-200 flex flex-col h-full">
       {error && <ErrorBanner message={error} />}
       
-      <UserProfile currentUser={currentUser} />
+      <UserProfile currentUser={currentUser} onLogout={onLogout} />
       
       <SearchBar 
         searchQuery={searchQuery}
@@ -346,7 +359,8 @@ Sidebar.propTypes = {
   setActiveTab: PropTypes.func.isRequired,
   currentUser: PropTypes.shape({
     username: PropTypes.string,
-    _id: PropTypes.string
+    _id: PropTypes.string,
+    online: PropTypes.bool
   }),
   onLogout: PropTypes.func
 };

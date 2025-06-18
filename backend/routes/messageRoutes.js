@@ -53,19 +53,27 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
-// Delete a message
-router.delete('/:messageId', authMiddleware, async (req, res) => {
+// Add this new route to messageRoutes.js
+router.patch('/:messageId', authMiddleware, async (req, res) => {
   try {
-    const message = await Message.findOneAndDelete({
-      _id: req.params.messageId,
-      sender: req.user._id
-    });
+    const message = await Message.findOneAndUpdate(
+      {
+        _id: req.params.messageId,
+        sender: req.user._id
+      },
+      {
+        isDeleted: true,
+        deletedAt: new Date(),
+        text: '[Message deleted]'
+      },
+      { new: true }
+    );
 
     if (!message) {
       return res.status(404).json({ message: 'Message not found or unauthorized' });
     }
 
-    res.json({ message: 'Message deleted successfully' });
+    res.json(message);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
