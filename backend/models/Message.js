@@ -8,21 +8,20 @@ const messageSchema = new mongoose.Schema({
   },
   receiver: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
+  },
+  room: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Room'
   },
   text: {
     type: String,
     required: true
   },
-  clientMsgId: { // Add this field
+  clientMsgId: {
     type: String,
     unique: true,
-    sparse: true // Allows null values for old messages
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
+    sparse: true
   },
   isDeleted: {
     type: Boolean,
@@ -40,5 +39,6 @@ const messageSchema = new mongoose.Schema({
 // messageSchema.index({ createdAt: 1 });
 // Add indexes for faster querying and to prevent duplicates
 messageSchema.index({ sender: 1, receiver: 1, text: 1,clientMsgId: 1, createdAt: 1 }, { unique: true });
+messageSchema.index({ room: 1, createdAt: 1 });
 
 module.exports = mongoose.model('Message', messageSchema);

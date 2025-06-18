@@ -148,22 +148,79 @@ socket.on('sendMessage', async ({ receiver, text, clientMsgId }) => {
   });
 
   // Handle room messages
-  socket.on('sendRoomMessage', async ({ roomId, text }) => {
-    try {
-      const message = {
-        sender: socket.userId,
-        senderName: socket.username,
-        roomId: roomId,
-        text: text,
-        timestamp: new Date()
-      };
-      
-      io.to(roomId).emit('newRoomMessage', message);
-    } catch (err) {
-      console.error('Room message error:', err);
-      socket.emit('messageError', { error: 'Failed to send room message' });
+socket.on('sendRoomMessage', async ({ roomId, text, tempId, sender, senderName }) => {
+  try {
+    // Create immediate message object
+    const immediateMessage = {
+      _id: tempId,
+      sender,
+      senderName,
+      room: roomId,
+      text,
+      createdAt: new Date(),
+      tempId
+    };
+
+    // Broadcast immediately to all room members
+    io.to(roomId).emit('newRoomMessage', immediateMessage);
+
+    // Save to database in background
+    const message = new Message({
+      sender,
+      room: roomId,
+      text,
+      clientMsgId: tempId
+    });
+
+    const savedMessage = await message.save();
+    const populatedMessage = await Message.populate(savedMessage, [
+      { path: 'sender', select: 'username avatar' }
+    ]);
+
+    // Broadcast the final saved message to update with database _id
+    io.to(roomId).emit('newRoomMessage', {
+      ...populatedMessage.toObject(),
+      tempId // Keep tempId for client-side matching
+    });
+
+  } catch (err) {
+    console.error('Room message error:', err);
+    // Notify sender about the failure
+    socket.emit('messageError', { 
+      error: 'Failed to send room message',
+      tempId
+    });
+    // Tell all clients to remove the failed message
+    io.to(roomId).emit('removeFailedMessage', { tempId });
+  }
+});
+
+socket.on('deleteRoomMessage', async ({ messageId }) => {
+  try {
+    const message = await Message.findOneAndUpdate(
+      {
+        _id: messageId,
+        sender: socket.userId
+      },
+      {
+        isDeleted: true,
+        deletedAt: new Date(),
+        text: '[Message deleted]'
+      },
+      { new: true }
+    );
+
+    if (!message) {
+      throw new Error('Message not found or unauthorized');
     }
-  });
+
+    // Notify room about deleted message
+    io.to(message.room.toString()).emit('roomMessageDeleted', message);
+  } catch (err) {
+    console.error('Delete message error:', err);
+    socket.emit('messageError', { error: 'Failed to delete message' });
+  }
+});
 
   // Handle disconnection
   socket.on('disconnect', async () => {

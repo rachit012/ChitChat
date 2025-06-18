@@ -21,11 +21,17 @@ const RoomChat = ({ currentUser }) => {
     let socket;
     const cleanupFunctions = [];
 
-    const fetchRoom = async () => {
+    const fetchData = async () => {
       try {
-        const { data } = await api.get(`/rooms/${roomId}`);
+        setLoading(true);
+        const [roomRes, messagesRes] = await Promise.all([
+          api.get(`/rooms/${roomId}`),
+          api.get(`/messages/room/${roomId}`)
+        ]);
+
         if (isMounted) {
-          setRoom(data);
+          setRoom(roomRes.data);
+          setMessages(messagesRes.data);
           setSocketError(null);
         }
       } catch (err) {
@@ -46,13 +52,32 @@ const RoomChat = ({ currentUser }) => {
         socket.emit("joinRoom", roomId);
         
         const messageHandler = (message) => {
-          if (isMounted && message.roomId === roomId) {
-            setMessages(prev => [...prev, message]);
+          if (isMounted && message.room === roomId) {
+            setMessages(prev => {
+              const existingIndex = prev.findIndex(msg => 
+                (msg.tempId && msg.tempId === message.tempId) ||
+                (msg._id && msg._id === message._id)
+              );
+              
+              if (existingIndex >= 0) {
+                const newMessages = [...prev];
+                newMessages[existingIndex] = message;
+                return newMessages;
+              }
+              return [...prev, message];
+            });
+          }
+        };
+
+        const removeFailedHandler = ({ tempId }) => {
+          if (isMounted) {
+            setMessages(prev => prev.filter(msg => msg.tempId !== tempId));
+            setSocketError("Failed to send message - please try again");
           }
         };
 
         const messageDeletedHandler = (message) => {
-          if (isMounted && message.roomId === roomId) {
+          if (isMounted && message.room === roomId) {
             setMessages(prev => prev.map(msg => 
               msg._id === message._id ? message : msg
             ));
@@ -85,6 +110,7 @@ const RoomChat = ({ currentUser }) => {
         };
 
         socket.on("newRoomMessage", messageHandler);
+        socket.on("removeFailedMessage", removeFailedHandler);
         socket.on("roomMessageDeleted", messageDeletedHandler);
         socket.on("userJoinedRoom", joinHandler);
         socket.on("userLeftRoom", leaveHandler);
@@ -92,6 +118,7 @@ const RoomChat = ({ currentUser }) => {
 
         cleanupFunctions.push(() => {
           socket.off("newRoomMessage", messageHandler);
+          socket.off("removeFailedMessage", removeFailedHandler);
           socket.off("roomMessageDeleted", messageDeletedHandler);
           socket.off("userJoinedRoom", joinHandler);
           socket.off("userLeftRoom", leaveHandler);
@@ -106,7 +133,7 @@ const RoomChat = ({ currentUser }) => {
       }
     };
 
-    fetchRoom();
+    fetchData();
     setupSocket();
 
     return () => {
@@ -131,47 +158,32 @@ const RoomChat = ({ currentUser }) => {
         throw new Error("Socket not available");
       }
 
-      // Generate unique ID for optimistic update
       const tempId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const tempMessage = {
         _id: tempId,
         sender: currentUser._id,
         senderName: currentUser.username,
-        roomId,
+        room: roomId,
         text: newMessage,
-        timestamp: new Date(),
-        isTemp: true
+        createdAt: new Date(),
+        tempId,
+        sender: {
+        _id: currentUser._id,
+        username: currentUser.username
+      }
       };
 
-      // Optimistic update
       setMessages(prev => [...prev, tempMessage]);
       setNewMessage("");
+      scrollToBottom();
 
-      // Send message via socket
       socket.emit("sendRoomMessage", {
         roomId,
         text: newMessage,
-        tempId
+        tempId,
+        sender: currentUser._id,
+        senderName: currentUser.username
       });
-
-      // Set timeout to remove optimistic update if not confirmed
-      const timeout = setTimeout(() => {
-        setMessages(prev => prev.filter(msg => msg._id !== tempId));
-        setSocketError("Message sending timed out - please try again");
-      }, 10000);
-
-      // Cleanup when we receive the actual message from server
-      const confirmHandler = (message) => {
-        if (message.roomId === roomId && message.tempId === tempId) {
-          clearTimeout(timeout);
-          socket.off("newRoomMessage", confirmHandler);
-          setMessages(prev => prev.map(msg => 
-            msg._id === tempId ? message : msg
-          ));
-        }
-      };
-
-      socket.on("newRoomMessage", confirmHandler);
 
     } catch (err) {
       console.error("Failed to send message:", err);
@@ -186,15 +198,13 @@ const RoomChat = ({ currentUser }) => {
         throw new Error("Socket not available");
       }
 
-      // Optimistic update
       setMessages(prev => prev.map(msg => 
         msg._id === messageId 
           ? { ...msg, text: '[Message deleted]', isDeleted: true } 
           : msg
       ));
 
-      // Send delete request via socket
-      socket.emit("deleteMessage", { messageId });
+      socket.emit("deleteRoomMessage", { messageId });
 
     } catch (err) {
       console.error("Failed to delete message:", err);
@@ -203,19 +213,11 @@ const RoomChat = ({ currentUser }) => {
   };
 
   if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <p>Loading room...</p>
-      </div>
-    );
+    return <div className="flex-1 flex items-center justify-center"><p>Loading room...</p></div>;
   }
 
   if (!room) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-red-500">
-        Failed to load room data
-      </div>
-    );
+    return <div className="flex-1 flex items-center justify-center text-red-500">Failed to load room data</div>;
   }
 
   return (
@@ -250,28 +252,29 @@ const RoomChat = ({ currentUser }) => {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((message, index) => {
-          const isSender = message.sender === currentUser._id;
+          const isSender = message.sender?._id === currentUser._id || message.sender === currentUser._id;
           const showHeader = index === 0 || 
             messages[index - 1]?.sender !== message.sender ||
-            new Date(message.timestamp) - new Date(messages[index - 1]?.timestamp || 0) > 60000;
+            new Date(message.createdAt) - new Date(messages[index - 1]?.createdAt || 0) > 60000;
           
           return (
-            <div key={message._id} className="space-y-1">
-              {showHeader && !isSender && (
-                <div className="text-xs font-medium text-gray-500">
-                  {message.senderName}
-                </div>
-              )}
-              <div className={`flex ${isSender ? "justify-end" : "justify-start"}`}>
+            <div 
+              key={message._id || message.tempId} 
+              className={`flex ${isSender ? "justify-end" : "justify-start"}`}
+            >
+              <div className={`max-w-xs lg:max-w-md ${isSender ? "" : ""}`}>
+                {showHeader && !isSender && (
+                  <div className="text-xs font-medium text-gray-500 mb-1">
+                    {message.senderName || message.sender?.username}
+                  </div>
+                )}
                 <div className="relative group">
                   <div
-                    className={`max-w-xs lg:max-w-md px-4 py-2 rounded-2xl ${
+                    className={`px-4 py-2 rounded-2xl ${
                       isSender
-                        ? "bg-blue-600 text-white rounded-br-none"
-                        : "bg-gray-200 text-gray-800 rounded-bl-none"
-                    } ${message.isTemp ? "opacity-80" : ""} ${
-                      message.isDeleted ? "italic text-gray-500" : ""
-                    }`}
+                        ? "bg-blue-600 text-white rounded-br-none ml-auto"
+                        : "bg-gray-200 text-gray-800 rounded-bl-none mr-auto"
+                    } ${message.isDeleted ? "italic text-gray-500" : ""}`}
                   >
                     <div className="text-sm break-words">
                       {message.isDeleted ? '[Message deleted]' : message.text}
@@ -281,14 +284,13 @@ const RoomChat = ({ currentUser }) => {
                         isSender ? "text-blue-200" : "text-gray-500"
                       }`}
                     >
-                      {new Date(message.timestamp).toLocaleTimeString([], {
+                      {new Date(message.createdAt).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit"
                       })}
-                      {message.isTemp && " (Sending...)"}
                     </div>
                   </div>
-                  {isSender && !message.isDeleted && !message.isTemp && (
+                  {isSender && !message.isDeleted && (
                     <button
                       onClick={() => handleDeleteMessage(message._id)}
                       className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
