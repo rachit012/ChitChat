@@ -15,8 +15,16 @@ const messageSchema = new mongoose.Schema({
     ref: 'Room'
   },
   text: {
-    type: String,
-    required: true
+    type: String
+  },
+  attachments: {
+    type: [{
+      url: { type: String, required: true },
+      type: { type: String, required: true }, // 'image', 'video', 'document', etc.
+      name: { type: String, required: true },
+      size: { type: Number, required: true }
+    }],
+    default: []
   },
   clientMsgId: {
     type: String,
@@ -27,6 +35,14 @@ const messageSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  deletedForSender: {
+    type: Boolean,
+    default: false
+  },
+  deletedForReceiver: {
+    type: Boolean,
+    default: false
+  },
   deletedAt: {
     type: Date
   }
@@ -34,11 +50,8 @@ const messageSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Add indexes for faster querying
-// messageSchema.index({ sender: 1, receiver: 1 });
-// messageSchema.index({ createdAt: 1 });
 // Add indexes for faster querying and to prevent duplicates
-messageSchema.index({ sender: 1, receiver: 1, text: 1,clientMsgId: 1, createdAt: 1 }, { unique: true });
+messageSchema.index({ sender: 1, receiver: 1, text: 1, clientMsgId: 1, createdAt: 1 }, { unique: true });
 messageSchema.index({ room: 1, createdAt: 1 });
 
 module.exports = mongoose.model('Message', messageSchema);

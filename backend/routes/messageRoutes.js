@@ -1,7 +1,60 @@
 const express = require('express');
 const router = express.Router();
+const multer = require("multer");
+const path = require('path');
 const Message = require('../models/Message');
 const authMiddleware = require('../middleware/authMiddleware');
+
+// Configure multer for file storage
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, '../uploads'));
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image/') || 
+      file.mimetype.startsWith('video/') || 
+      file.mimetype === 'application/pdf') {
+    cb(null, true);
+  } else {
+    cb(new Error('Unsupported file type'), false);
+  }
+};
+
+// Set up Multer for file uploads
+const upload = multer({
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
+
+// Handle file uploads
+router.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Return file information with full URL
+    const fileInfo = {
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      url: `http://localhost:5000/uploads/${req.file.filename}`,
+      type: req.file.mimetype.startsWith('image/') ? 'image' : 'file'
+    };
+
+    res.status(200).json(fileInfo);
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ error: err.message || 'File upload failed' });
+  }
+});
 
 // Get messages between two users with pagination
 router.get('/:userId', authMiddleware, async (req, res) => {
@@ -14,6 +67,25 @@ router.get('/:userId', authMiddleware, async (req, res) => {
       $or: [
         { sender: req.user._id, receiver: req.params.userId },
         { sender: req.params.userId, receiver: req.user._id }
+      ],
+      // Filter out messages deleted for the current user
+      $and: [
+        {
+          $or: [
+            { isDeleted: false },
+            { 
+              $and: [
+                { isDeleted: true },
+                { 
+                  $or: [
+                    { sender: req.user._id, deletedForSender: false },
+                    { receiver: req.user._id, deletedForReceiver: false }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
       ]
     })
     .sort({ createdAt: -1 })
@@ -98,6 +170,46 @@ router.delete('/:messageId', authMiddleware, async (req, res) => {
 
     res.json({ message: 'Message deleted successfully' });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Test endpoint for creating messages with attachments
+router.post('/test-with-attachments', authMiddleware, async (req, res) => {
+  try {
+    const { receiverId, text, attachments = [] } = req.body;
+    
+    console.log('=== API TEST DEBUG ===');
+    console.log('Received attachments:', attachments);
+    console.log('Attachments type:', typeof attachments);
+    console.log('Is Array?', Array.isArray(attachments));
+    
+    const messageData = {
+      sender: req.user._id,
+      text,
+      attachments: Array.isArray(attachments) ? attachments : [],
+      clientMsgId: `test-${Date.now()}`
+    };
+    
+    if (receiverId) {
+      messageData.receiver = receiverId;
+    }
+    
+    console.log('Message data to save:', messageData);
+    
+    const message = new Message(messageData);
+    const savedMessage = await message.save();
+    
+    console.log('Message saved successfully:', savedMessage._id);
+    
+    const populatedMessage = await Message.populate(savedMessage, [
+      { path: 'sender', select: 'username avatar' },
+      { path: 'receiver', select: 'username avatar' }
+    ]);
+
+    res.status(201).json(populatedMessage);
+  } catch (err) {
+    console.error('Test message error:', err);
     res.status(500).json({ error: err.message });
   }
 });
