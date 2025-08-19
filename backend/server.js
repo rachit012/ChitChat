@@ -26,13 +26,13 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://localhost:5000',
-  'https://chit-chat-5lbam5x2b-rachit012s-projects.vercel.app', // your Vercel frontend
+  'https://chit-chat-5lbam5x2b-rachit012s-projects.vercel.app',
+  'https://chit-chat-6vg7jj4q1-rachit012s-projects.vercel.app', // new Vercel frontend
   process.env.CLIENT_URL
 ].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin (like mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
