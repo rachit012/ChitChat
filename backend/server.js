@@ -633,8 +633,15 @@ app.use('/api/messages', require('./routes/messageRoutes'));
 app.use('/api/rooms', require('./routes/roomRoutes'));
 app.use('/api/ai', require('./routes/aiRoutes'));
 
+// Serve frontend build in production
+if (process.env.NODE_ENV === "production") {
+  app.use(express.static(path.join(__dirname, "../dist")));
+
+  app.get("*", (req, res) => {
+    res.sendFile(path.resolve(__dirname, "../dist", "index.html"));
+  });
+}
+
 // Server start
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-// fixed AI
