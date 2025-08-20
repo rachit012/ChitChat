@@ -27,7 +27,8 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5000',
   'https://chit-chat-5lbam5x2b-rachit012s-projects.vercel.app',
-  'https://chit-chat-6vg7jj4q1-rachit012s-projects.vercel.app', // new Vercel frontend
+  'https://chit-chat-6vg7jj4q1-rachit012s-projects.vercel.app',
+  'https://chit-chat-lime-three.vercel.app', // latest Vercel frontend
   process.env.CLIENT_URL
 ].filter(Boolean);
 
