@@ -199,19 +199,23 @@ const GroupVideoCall = ({ currentUser, room, onClose, callType = 'video' }) => {
         });
       } else if (signal.type === 'answer') {
         console.log('Setting remote description (answer) for', data.from);
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
-        
-        // Add any pending candidates
-        const pendingCandidates = pendingCandidatesRef.current.get(data.from) || [];
-        while (pendingCandidates.length > 0) {
-          const candidate = pendingCandidates.shift();
-          try {
-            await peerConnection.addIceCandidate(candidate);
-          } catch (err) {
-            console.error('Error adding pending candidate:', err);
+        console.log('Current signalingState:', peerConnection.signalingState);
+        if (peerConnection.signalingState === 'have-local-offer') {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+          // Add any pending candidates
+          const pendingCandidates = pendingCandidatesRef.current.get(data.from) || [];
+          while (pendingCandidates.length > 0) {
+            const candidate = pendingCandidates.shift();
+            try {
+              await peerConnection.addIceCandidate(candidate);
+            } catch (err) {
+              console.error('Error adding pending candidate:', err);
+            }
           }
+          pendingCandidatesRef.current.set(data.from, pendingCandidates);
+        } else {
+          console.warn('Skipping setRemoteDescription(answer): wrong signaling state', peerConnection.signalingState);
         }
-        pendingCandidatesRef.current.set(data.from, pendingCandidates);
       } else if (signal.type === 'candidate') {
         console.log('Adding ICE candidate for', data.from);
         if (peerConnection.remoteDescription) {

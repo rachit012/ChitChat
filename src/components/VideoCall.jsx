@@ -234,16 +234,20 @@ const VideoCall = ({ currentUser, otherUser, onClose, callType = 'video', isInco
         });
       } else if (signal.type === 'answer') {
         console.log('Setting remote description (answer)');
-        await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(signal));
-        
-        // Add any pending candidates
-        while (pendingCandidatesRef.current.length > 0) {
-          const candidate = pendingCandidatesRef.current.shift();
-          try {
-            await peerConnectionRef.current.addIceCandidate(candidate);
-          } catch (err) {
-            console.error('Error adding pending candidate:', err);
+        console.log('Current signalingState:', peerConnectionRef.current.signalingState);
+        if (peerConnectionRef.current.signalingState === 'have-local-offer') {
+          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(signal));
+          // Add any pending candidates
+          while (pendingCandidatesRef.current.length > 0) {
+            const candidate = pendingCandidatesRef.current.shift();
+            try {
+              await peerConnectionRef.current.addIceCandidate(candidate);
+            } catch (err) {
+              console.error('Error adding pending candidate:', err);
+            }
           }
+        } else {
+          console.warn('Skipping setRemoteDescription(answer): wrong signaling state', peerConnectionRef.current.signalingState);
         }
       } else if (signal.type === 'candidate') {
         console.log('Adding ICE candidate');
